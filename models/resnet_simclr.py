@@ -2,13 +2,16 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision.models as models
 
+import models.resnet_cifar as cresnet
 
 class ResNetSimCLR(nn.Module):
 
     def __init__(self, base_model, out_dim):
         super(ResNetSimCLR, self).__init__()
         self.resnet_dict = {"resnet18": models.resnet18(pretrained=False),
-                            "resnet50": models.resnet50(pretrained=False)}
+                            "resnet50": models.resnet50(pretrained=False),
+                            "resnet18-cifar": cresnet.ResNet18(),
+                            "resnet50-cifar": cresnet.ResNet50()}
 
         resnet = self._get_basemodel(base_model)
         num_ftrs = resnet.fc.in_features

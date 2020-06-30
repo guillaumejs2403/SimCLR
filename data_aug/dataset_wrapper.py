@@ -10,21 +10,36 @@ np.random.seed(0)
 
 class DataSetWrapper(object):
 
-    def __init__(self, batch_size, num_workers, valid_size, input_shape, s):
+    def __init__(self, batch_size, num_workers, valid_size, input_shape, s, dataset='SLT10'):
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.valid_size = valid_size
         self.s = s
         self.input_shape = eval(input_shape)
+        self.dataset = dataset
 
     def get_data_loaders(self):
         data_augment = self._get_simclr_pipeline_transform()
 
-        train_dataset = datasets.STL10('./data', split='train+unlabeled', download=True,
-                                       transform=SimCLRDataTransform(data_augment))
+        # train_dataset = datasets.STL10('./data', split='train+unlabeled', download=True,
+        #                                transform=SimCLRDataTransform(data_augment))
+
+        train_dataset = get_dataset()
 
         train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset)
         return train_loader, valid_loader
+
+    def get_dataset(self):
+        if self.dataset == 'STL10':
+            train_dataset = datasets.STL10('/media/SSD0/datasets', split='train+unlabeled', download=True,
+                                           transform=SimCLRDataTransform(data_augment))
+        elif 'CIFAR' in self.dataset:
+            dataset = getattr(datasets, self.datasets)
+            train_dataset = dataset('/media/SSD0/datasets', train=True, download=True,
+                                    transform=SimCLRDataTransform(data_augment))
+        else:
+            raise ValueError(f'Dataset {self.dataset} is not implemented')
+
 
     def _get_simclr_pipeline_transform(self):
         # get a set of data augmentation transformations as described in the SimCLR paper.

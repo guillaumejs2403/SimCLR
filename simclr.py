@@ -82,8 +82,10 @@ class SimCLR(object):
         n_iter = 0
         valid_n_iter = 0
         best_valid_loss = np.inf
+        epochs = self.config['epochs']
 
-        for epoch_counter in range(self.config['epochs']):
+        for epoch_counter in range(epochs):
+            print(f'{epoch_counter + 1} / {epochs}', end='\r')
             for (xis, xjs), _ in train_loader:
                 optimizer.zero_grad()
 
@@ -120,6 +122,7 @@ class SimCLR(object):
                 scheduler.step()
             self.writer.add_scalar('cosine_lr_decay', scheduler.get_lr()[0], global_step=n_iter)
 
+    print('\nEnd')
     def _load_pre_trained_weights(self, model):
         try:
             checkpoints_folder = os.path.join('./runs', self.config['fine_tune_from'], 'checkpoints')

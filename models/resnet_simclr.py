@@ -32,8 +32,9 @@ class ResNetSimCLR(nn.Module):
 
     def forward(self, x):
         h = self.features(x)
-        h = h.squeeze()
+        h = h.view(h.size(0), -1)
 
+        # import pdb; pdb.set_trace()
         x = self.l1(h)
         x = F.relu(x)
         x = self.l2(x)

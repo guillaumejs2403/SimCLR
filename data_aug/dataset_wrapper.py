@@ -20,12 +20,10 @@ class DataSetWrapper(object):
 
     def get_data_loaders(self):
 
-        # train_dataset = datasets.STL10('./data', split='train+unlabeled', download=True,
-        #                                transform=SimCLRDataTransform(data_augment))
-
         train_dataset = self.get_dataset()
 
         train_loader, valid_loader = self.get_train_validation_data_loaders(train_dataset)
+
         return train_loader, valid_loader
 
     def get_dataset(self):
@@ -42,6 +40,29 @@ class DataSetWrapper(object):
 
         return train_dataset
 
+    def get_dataset_eval(self):
+        data_augment = self._get_validation_transform()
+        if self.dataset == 'STL10':
+            train_dataset = datasets.STL10('/media/SSD0/datasets', split='train', download=True,
+                                           transform=data_augment)
+            val_dataset = datasets.STL10('/media/SSD0/datasets', split='test', download=True,
+                                         transform=transforms.ToTensor())
+            num_classes = 10
+        elif 'CIFAR' in self.dataset:
+            dataset = getattr(datasets, self.dataset)
+            train_dataset = dataset('/media/SSD0/datasets', train=True, download=True,
+                                    transform=data_augment)
+            val_dataset = dataset('/media/SSD0/datasets', train=False, download=True,
+                                  transform=transforms.ToTensor())
+            num_classes = 10
+            if '100' in self.dataset:
+                num_classes = 100
+        else:
+            raise ValueError(f'Dataset {self.dataset} is not implemented')
+
+        return train_dataset, val_dataset, num_classes
+
+
 
     def _get_simclr_pipeline_transform(self):
         # get a set of data augmentation transformations as described in the SimCLR paper.
@@ -53,6 +74,14 @@ class DataSetWrapper(object):
                                               GaussianBlur(kernel_size=int(0.1 * self.input_shape[0])),
                                               transforms.ToTensor()])
         return data_transforms
+
+    def _get_validation_transform(self):
+        data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=self.input_shape[0]),
+                                              transforms.RandomHorizontalFlip(),
+                                              transforms.RandomGrayscale(p=0.2),
+                                              transforms.ToTensor()])
+        return data_transforms
+
 
     def get_train_validation_data_loaders(self, train_dataset):
         # obtain training indices that will be used for validation

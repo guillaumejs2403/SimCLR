@@ -1,8 +1,9 @@
 import torch
-from models.resnet_simclr import ResNetSimCLR
-from torch.utils.tensorboard import SummaryWriter
+import torch.nn as nn
 import torch.nn.functional as F
 from loss.nt_xent import NTXentLoss
+from models.resnet_simclr import ResNetSimCLR
+from torch.utils.tensorboard import SummaryWriter
 import os
 import shutil
 import sys
@@ -152,3 +153,90 @@ class SimCLR(object):
             valid_loss /= counter
         model.train()
         return valid_loss
+
+    def eval_frozen(self):
+
+        train_loader, valid_loader, num_classes = self.dataset.get_data_loaders()
+
+        model = ResNetSimCLR(**self.config["model"]).to(self.device)
+        model = self._load_pre_trained_weights(model)
+        model.to(self.device)
+        model.eval()
+
+        lineal_classifier = nn.Lineal(model.l1.in_features, num_classes)
+        lineal_classifier.to(self.device)
+
+        optimizer = torch.optim.SGD(lineal_classifier.parameters(), 1e-2,
+                                     weight_decay=eval(self.config['weight_decay']))
+
+        epochs = self.config['epochs']
+
+        scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer,
+                                                         milestones=[int(0.5 * epochs), int(0.8 * epochs)],
+                                                         gamma=0.1,
+                                                         last_epoch=-1)
+
+        criterion = nn.CrossEntropyLoss()
+        best_acc = 0
+
+        for epoch in range(epochs):
+            print('=' * 20)
+            print(f'Epoch: {epoch + 1} / {epochs}')
+
+            top1 = 0
+            running_loss = 0
+            n = 0
+            lineal_classifier.train()
+
+            for idx, (img, lab) in enumerate(train_loader):
+
+                B = img.size(0)
+
+                img = img.to(self.device)
+                lab = lab.to(self.device)
+
+                optimizer.zero_grad()
+
+                with torch.no_grad():
+                    x, _ = model(img)
+
+                x = lineal_classifier(x)
+
+                loss = criterion(x, lab)
+
+                loss.backward()
+
+                top1 += (x.argmax(dim=1) == lab).sum().item() * B
+                running_loss += loss.item() * B
+                n += B
+
+                print('Training {}/{} - Loss: {:.2f} - top 1: {:.2f}'.format(idx + 1, len(train_loader), running_loss / B, 100 * top1 / B), end='\r')
+
+            print('\n')
+
+            top1 = 0
+            running_loss = 0
+            n = 0
+            lineal_classifier.eval()
+
+            for idx, (img, lab) in enumerate(val_loader):
+
+                with torch.no_grad():
+                    x, _ = model(img)
+                    x = lineal_classifier(x)
+                    loss = criterion(x, lab)
+
+                top1 += (x.argmax(dim=1) == lab).sum().item() * B
+                running_loss += loss.item() * B
+                n += B
+
+                print('Val {}/{} - Loss: {:.2f} - top 1: {:.2f}'.format(idx + 1, len(val_loader), running_loss / B, 100 * top1 / B), end='\r')
+
+            print('\n')
+            if best_acc < top1:
+                best_acc = top1
+
+            print(f'Best ACC: {best_acc * 100}')
+
+
+

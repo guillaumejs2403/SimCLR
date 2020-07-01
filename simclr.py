@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from loss.nt_xent import NTXentLoss
-from models.resnet_simclr import ResNetSimCLR
+from models.resnet_simclr import ResNetSimCLR, ResNetSimCLR_AE
 from torch.utils.tensorboard import SummaryWriter
 import os
 import shutil
@@ -37,6 +37,7 @@ class SimCLR(object):
         self.writer = SummaryWriter()
         self.dataset = dataset
         self.nt_xent_criterion = NTXentLoss(self.device, config['batch_size'], **config['loss'])
+        self.model_generator = ResNetSimCLR
 
     def _get_device(self):
         device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -62,7 +63,7 @@ class SimCLR(object):
 
         train_loader, valid_loader = self.dataset.get_data_loaders()
 
-        model = ResNetSimCLR(**self.config["model"]).to(self.device)
+        model = self.model_generator(**self.config["model"]).to(self.device)
         model = self._load_pre_trained_weights(model)
 
         optimizer = torch.optim.Adam(model.parameters(), 3e-4, weight_decay=eval(self.config['weight_decay']))
@@ -156,17 +157,17 @@ class SimCLR(object):
 
     def eval_frozen(self):
 
-        train_loader, valid_loader, num_classes = self.dataset.get_data_loaders()
+        train_loader, val_loader, num_classes = self.dataset.get_dataset_eval()
 
         model = ResNetSimCLR(**self.config["model"]).to(self.device)
         model = self._load_pre_trained_weights(model)
         model.to(self.device)
         model.eval()
 
-        lineal_classifier = nn.Lineal(model.l1.in_features, num_classes)
+        lineal_classifier = nn.Linear(model.l1.in_features, num_classes)
         lineal_classifier.to(self.device)
 
-        optimizer = torch.optim.SGD(lineal_classifier.parameters(), 1e-2,
+        optimizer = torch.optim.SGD(lineal_classifier.parameters(), 1e-3,
                                      weight_decay=eval(self.config['weight_decay']))
 
         epochs = self.config['epochs']
@@ -197,20 +198,16 @@ class SimCLR(object):
 
                 optimizer.zero_grad()
 
-                with torch.no_grad():
-                    x, _ = model(img)
-
-                x = lineal_classifier(x)
-
-                loss = criterion(x, lab)
+                loss, top1_batch = self._step_eval_train(model, lineal_classifier, img, lab)
 
                 loss.backward()
+                optimizer.step()
 
-                top1 += (x.argmax(dim=1) == lab).sum().item() * B
+                top1 += (x.argmax(dim=1) == lab).sum().item()
                 running_loss += loss.item() * B
                 n += B
 
-                print('Training {}/{} - Loss: {:.2f} - top 1: {:.2f}'.format(idx + 1, len(train_loader), running_loss / B, 100 * top1 / B), end='\r')
+                print('Training {}/{} - Loss: {:.2f} - top 1: {:.2f}'.format(idx + 1, len(train_loader), running_loss / n, 100 * top1 / n), end='\r')
 
             print('\n')
 
@@ -221,22 +218,85 @@ class SimCLR(object):
 
             for idx, (img, lab) in enumerate(val_loader):
 
-                with torch.no_grad():
-                    x, _ = model(img)
-                    x = lineal_classifier(x)
-                    loss = criterion(x, lab)
+                B = img.size(0)
 
-                top1 += (x.argmax(dim=1) == lab).sum().item() * B
+                img = img.to(self.device)
+                lab = lab.to(self.device)
+
+                loss, top1_batch = self._step_eval_eval(model, lineal_classifier, img, lab)
+
+                top1 += top1_batch
                 running_loss += loss.item() * B
                 n += B
 
-                print('Val {}/{} - Loss: {:.2f} - top 1: {:.2f}'.format(idx + 1, len(val_loader), running_loss / B, 100 * top1 / B), end='\r')
+                print('Val {}/{} - Loss: {:.2f} - top 1: {:.2f}'.format(idx + 1, len(val_loader), running_loss / n, 100 * top1 / n), end='\r')
 
             print('\n')
             if best_acc < top1:
                 best_acc = top1
 
-            print(f'Best ACC: {best_acc * 100}')
+            print(f'Best ACC: {best_acc * 100 / n}')
+
+    def _step_eval_eval(self, model, lineal_classifier, img, lab):
+        with torch.no_grad():
+            x, _ = model(img)
+            x = lineal_classifier(x)
+            loss = criterion(x, lab)
+
+        top1 = (x.argmax(dim=1) == lab).sum().item()
+
+        return loss.item(), top1
 
 
+    def _step_eval_train(self, model, lineal_classifier, criterion, img, lab):
+        with torch.no_grad():
+            x, _ = model(img)
+        x = lineal_classifier(x)
+        loss = criterion(x, lab)
 
+        top1 = (x.argmax(dim=1) == lab).sum().item()
+
+        return loss, top1
+
+
+class SimCLR_AE(SimCLR):
+    def __init__(self, dataset, config):
+        super(SimCLR_AE, self).__init__(dataset, config)
+        self.recons_crit = nn.MSELoss()
+        self.model_generator = ResNetSimCLR_AE
+
+    def _step(self, model, xis, xjs, n_iter):
+        # get the representations and the projections
+        ris, zis, Iis = model(xis)  # [N,C]
+
+        # get the representations and the projections
+        rjs, zjs, Ijs = model(xjs)  # [N,C]
+
+        # normalize projection feature vectors
+        zis = F.normalize(zis, dim=1)
+        zjs = F.normalize(zjs, dim=1)
+
+        loss = (self.nt_xent_criterion(zis, zjs) +
+                self.config['lambda'] * (self.recons_crit(xis, Iis) + self.recons_crit(xjs, Ijs)) / 2)
+        return loss
+
+    def _step_eval_eval(self, model, lineal_classifier, img, lab):
+        with torch.no_grad():
+            x, _, _ = model(img)
+            x = lineal_classifier(x)
+            loss = criterion(x, lab)
+
+        top1 = (x.argmax(dim=1) == lab).sum().item()
+
+        return loss.item(), top1
+
+
+    def _step_eval_train(self, model, lineal_classifier, criterion, img, lab):
+        with torch.no_grad():
+            x, _, _ = model(img)
+        x = lineal_classifier(x)
+        loss = criterion(x, lab)
+
+        top1 = (x.argmax(dim=1) == lab).sum().item()
+
+        return loss, top1

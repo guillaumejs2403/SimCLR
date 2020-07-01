@@ -1,10 +1,11 @@
 batch_size: 512
 epochs: 80
 eval_every_n_epochs: 1
-fine_tune_from: "Jun30_19-44-53_bcv003"
+fine_tune_from: None
 log_every_n_steps: 50
 weight_decay: 10e-6
 fp16_precision: False
+lambda: 1.0
 
 model:
   out_dim: 256

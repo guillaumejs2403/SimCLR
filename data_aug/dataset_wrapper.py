@@ -27,11 +27,12 @@ class DataSetWrapper(object):
         return train_loader, valid_loader
 
     def get_dataset(self):
-        data_augment = self._get_simclr_pipeline_transform()
         if self.dataset == 'STL10':
+            data_augment = self._get_simclr_pipeline_transform()
             train_dataset = datasets.STL10('/media/SSD0/datasets', split='train+unlabeled', download=True,
                                            transform=SimCLRDataTransform(data_augment))
         elif 'CIFAR' in self.dataset:
+            data_augment = self._get_simclr_pipeline_transform_cifar()
             dataset = getattr(datasets, self.dataset)
             train_dataset = dataset('/media/SSD0/datasets', train=True, download=True,
                                     transform=SimCLRDataTransform(data_augment))
@@ -60,7 +61,13 @@ class DataSetWrapper(object):
         else:
             raise ValueError(f'Dataset {self.dataset} is not implemented')
 
-        return train_dataset, val_dataset, num_classes
+        train_loader = DataLoader(train_dataset, batch_size=self.batch_size,
+                                  num_workers=self.num_workers, drop_last=True, shuffle=False)
+
+        valid_loader = DataLoader(val_dataset, batch_size=self.batch_size,
+                                  num_workers=self.num_workers, drop_last=True)
+
+        return train_loader, valid_loader, num_classes
 
 
 
@@ -75,13 +82,22 @@ class DataSetWrapper(object):
                                               transforms.ToTensor()])
         return data_transforms
 
+    def _get_simclr_pipeline_transform_cifar(self):
+        # get a set of data augmentation transformations as described in the SimCLR paper.
+        color_jitter = transforms.ColorJitter(0.8 * self.s, 0.8 * self.s, 0.8 * self.s, 0.2 * self.s)
+        data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=self.input_shape[0]),
+                                              transforms.RandomHorizontalFlip(),
+                                              transforms.RandomApply([color_jitter], p=0.8),
+                                              transforms.RandomGrayscale(p=0.2),
+                                              transforms.ToTensor()])
+        return data_transforms
+
     def _get_validation_transform(self):
         data_transforms = transforms.Compose([transforms.RandomResizedCrop(size=self.input_shape[0]),
                                               transforms.RandomHorizontalFlip(),
                                               transforms.RandomGrayscale(p=0.2),
                                               transforms.ToTensor()])
         return data_transforms
-
 
     def get_train_validation_data_loaders(self, train_dataset):
         # obtain training indices that will be used for validation
